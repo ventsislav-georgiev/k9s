@@ -135,47 +135,7 @@ func (a *APIClient) clearCache() {
 
 // CanI checks if user has access to a certain resource.
 func (a *APIClient) CanI(ns, gvr string, verbs []string) (auth bool, err error) {
-	a.mx.Lock()
-	defer a.mx.Unlock()
-
-	if !a.connOK {
-		return false, errors.New("ACCESS -- No API server connection")
-	}
-	if IsClusterWide(ns) {
-		ns = AllNamespaces
-	}
-	key := makeCacheKey(ns, gvr, verbs)
-	if v, ok := a.cache.Get(key); ok {
-		if auth, ok = v.(bool); ok {
-			return auth, nil
-		}
-	}
-
-	dial, err := a.Dial()
-	if err != nil {
-		return false, err
-	}
-	client, sar := dial.AuthorizationV1().SelfSubjectAccessReviews(), makeSAR(ns, gvr)
-
-	ctx, cancel := context.WithTimeout(context.Background(), a.config.CallTimeout())
-	defer cancel()
-	for _, v := range verbs {
-		sar.Spec.ResourceAttributes.Verb = v
-		resp, err := client.Create(ctx, sar, metav1.CreateOptions{})
-		if err != nil {
-			log.Warn().Err(err).Msgf("  Dial Failed!")
-			a.cache.Add(key, false, cacheExpiry)
-			return auth, err
-		}
-		if !resp.Status.Allowed {
-			a.cache.Add(key, false, cacheExpiry)
-			return auth, fmt.Errorf("`%s access denied for user on %q:%s", v, ns, gvr)
-		}
-	}
-	auth = true
-	a.cache.Add(key, true, cacheExpiry)
-
-	return
+	return true, nil
 }
 
 // CurrentNamespaceName return namespace name set via either cli arg or cluster config.

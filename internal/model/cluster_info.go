@@ -130,14 +130,14 @@ func (c *ClusterInfo) Refresh() {
 	}
 	data.K8sVer = c.cluster.Version()
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.cluster.factory.Client().Config().CallTimeout())
-	defer cancel()
-	var mx client.ClusterMetrics
-	if err := c.cluster.Metrics(ctx, &mx); err == nil {
-		data.Cpu, data.Mem, data.Ephemeral = mx.PercCPU, mx.PercMEM, mx.PercEphemeral
-	} else {
-		log.Error().Err(err).Msgf("Cluster metrics failed")
-	}
+	// ctx, cancel := context.WithTimeout(context.Background(), c.cluster.factory.Client().Config().CallTimeout())
+	// defer cancel()
+	// var mx client.ClusterMetrics
+	// if err := c.cluster.Metrics(ctx, &mx); err == nil {
+	// 	data.Cpu, data.Mem, data.Ephemeral = mx.PercCPU, mx.PercMEM, mx.PercEphemeral
+	// } else {
+	// 	log.Error().Err(err).Msgf("Cluster metrics failed")
+	// }
 
 	if c.data.Deltas(data) {
 		c.fireMetaChanged(c.data, data)
