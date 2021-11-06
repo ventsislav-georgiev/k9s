@@ -120,14 +120,14 @@ func (c *ClusterInfo) Refresh() {
 		data.Cluster = c.cluster.ClusterName()
 		data.User = c.cluster.UserName()
 		data.K8sVer = c.cluster.Version()
-		ctx, cancel := context.WithTimeout(context.Background(), c.cluster.factory.Client().Config().CallTimeout())
-		defer cancel()
-		var mx client.ClusterMetrics
-		if err := c.cluster.Metrics(ctx, &mx); err == nil {
-			data.Cpu, data.Mem, data.Ephemeral = mx.PercCPU, mx.PercMEM, mx.PercEphemeral
-		} else {
-			log.Warn().Err(err).Msgf("Cluster metrics failed")
-		}
+		// ctx, cancel := context.WithTimeout(context.Background(), c.cluster.factory.Client().Config().CallTimeout())
+		// defer cancel()
+		// var mx client.ClusterMetrics
+		// if err := c.cluster.Metrics(ctx, &mx); err == nil {
+		// 	data.Cpu, data.Mem, data.Ephemeral = mx.PercCPU, mx.PercMEM, mx.PercEphemeral
+		// } else {
+		// 	log.Warn().Err(err).Msgf("Cluster metrics failed")
+		// }
 	}
 	data.K9sVer = c.version
 	v1, v2 := NewSemVer(data.K9sVer), NewSemVer(c.fetchK9sLatestRev())
