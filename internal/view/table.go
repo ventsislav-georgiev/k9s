@@ -236,6 +236,9 @@ func (t *Table) bindKeys() {
 		ui.KeyShiftA:           ui.NewKeyAction("Sort Age", t.SortColCmd(ageCol, true), false),
 		ui.KeyShiftS:           ui.NewKeyAction("Sort Status", t.SortColCmd(statusCol, true), false),
 		ui.KeyShiftO:           ui.NewKeyAction("Sort Selected Column", t.sortSelectedColumnCmd, false),
+		ui.KeyQ:                ui.NewKeyAction("Reverse Sort Order", t.SortInvertCmd, false),
+		ui.KeyLess:             ui.NewKeyAction("Sort Previous Column", t.SortColChange(ui.SortPrevCol), false),
+		ui.KeyGreater:          ui.NewKeyAction("Sort Next Column", t.SortColChange(ui.SortNextCol), false),
 	})
 }
 
