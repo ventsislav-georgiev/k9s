@@ -153,66 +153,7 @@ func (a *APIClient) clearCache() {
 
 // CanI checks if user has access to a certain resource.
 func (a *APIClient) CanI(ns string, gvr *GVR, name string, verbs []string) (auth bool, err error) {
-	if !a.getConnOK() {
-		return false, errors.New("ACCESS -- No API server connection")
-	}
-	if gvr == NsGVR {
-		// The name of the namespace is required to check permissions in some cases
-		ns = name
-	}
-	if IsClusterWide(ns) {
-		ns = BlankNamespace
-	}
-	if gvr == HmGVR {
-		// helm stores release data in secrets
-		gvr = SecGVR
-	}
-	key := makeCacheKey(ns, gvr, name, verbs)
-	if v, ok := a.cache.Get(key); ok {
-		if auth, ok = v.(bool); ok {
-			return auth, nil
-		}
-	}
-
-	clog := a.log.With(slogs.Subsys, "can")
-
-	dial, err := a.Dial()
-	if err != nil {
-		return false, err
-	}
-	client, sar := dial.AuthorizationV1().SelfSubjectAccessReviews(), makeSAR(ns, gvr, name)
-
-	ctx, cancel := context.WithTimeout(context.Background(), a.config.CallTimeout())
-	defer cancel()
-	for _, v := range verbs {
-		sar.Spec.ResourceAttributes.Verb = v
-		resp, err := client.Create(ctx, sar, metav1.CreateOptions{})
-		clog.Debug("[CAN] access",
-			slogs.GVR, gvr,
-			slogs.Namespace, ns,
-			slogs.ResName, name,
-			slogs.Verb, verbs,
-		)
-		if resp != nil {
-			clog.Debug("[CAN] response",
-				slogs.AuthStatus, resp.Status.Allowed,
-				slogs.AuthReason, resp.Status.Reason,
-			)
-		}
-		if err != nil {
-			clog.Warn("Auth request failed", slogs.Error, err)
-			a.cache.Add(key, false, cacheExpiry)
-			return auth, err
-		}
-		if !resp.Status.Allowed {
-			a.cache.Add(key, false, cacheExpiry)
-			return auth, fmt.Errorf("(%s) access denied for user on resource %q:%s in namespace %q", v, name, gvr, ns)
-		}
-	}
-	auth = true
-	a.cache.Add(key, true, cacheExpiry)
-
-	return
+	return true, nil
 }
 
 // CurrentNamespaceName return namespace name set via either cli arg or cluster config.
