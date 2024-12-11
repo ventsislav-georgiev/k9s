@@ -72,6 +72,23 @@ func (f *Factory) Terminate() {
 
 // List returns a resource collection.
 func (f *Factory) List(gvr, ns string, wait bool, labels labels.Selector) ([]runtime.Object, error) {
+	return f.listWithRetries(gvr, ns, wait, labels, 10)
+}
+
+func (f *Factory) listWithRetries(gvr, ns string, wait bool, labels labels.Selector, retries int) ([]runtime.Object, error) {
+	oo, err := f.list(gvr, ns, wait, labels)
+	if err != nil {
+		if retries == 0 {
+			return nil, err
+		}
+		time.Sleep(10 * time.Millisecond)
+		return f.listWithRetries(gvr, ns, wait, labels, retries-1)
+	}
+
+	return oo, nil
+}
+
+func (f *Factory) list(gvr, ns string, wait bool, labels labels.Selector) ([]runtime.Object, error) {
 	inf, err := f.CanForResource(ns, gvr, client.ListAccess)
 	if err != nil {
 		return nil, err
@@ -109,6 +126,23 @@ func (f *Factory) HasSynced(gvr, ns string) (bool, error) {
 
 // Get retrieves a given resource.
 func (f *Factory) Get(gvr, fqn string, wait bool, sel labels.Selector) (runtime.Object, error) {
+	return f.getWithRetries(gvr, fqn, wait, sel, 10)
+}
+
+func (f *Factory) getWithRetries(gvr, fqn string, wait bool, sel labels.Selector, retries int) (runtime.Object, error) {
+	o, err := f.get(gvr, fqn, wait, sel)
+	if err != nil {
+		if retries == 0 {
+			return nil, err
+		}
+		time.Sleep(10 * time.Millisecond)
+		return f.getWithRetries(gvr, fqn, wait, sel, retries-1)
+	}
+
+	return o, nil
+}
+
+func (f *Factory) get(gvr, fqn string, wait bool, sel labels.Selector) (runtime.Object, error) {
 	ns, n := namespaced(fqn)
 	inf, err := f.CanForResource(ns, gvr, []string{client.GetVerb})
 	if err != nil {
