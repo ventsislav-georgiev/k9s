@@ -73,6 +73,23 @@ func (f *Factory) Terminate() {
 
 // List returns a resource collection.
 func (f *Factory) List(gvr *client.GVR, ns string, wait bool, lbls labels.Selector) ([]runtime.Object, error) {
+	return f.listWithRetries(gvr, ns, wait, lbls, 10)
+}
+
+func (f *Factory) listWithRetries(gvr *client.GVR, ns string, wait bool, lbls labels.Selector, retries int) ([]runtime.Object, error) {
+	oo, err := f.list(gvr, ns, wait, lbls)
+	if err != nil {
+		if retries == 0 {
+			return nil, err
+		}
+		time.Sleep(10 * time.Millisecond)
+		return f.listWithRetries(gvr, ns, wait, lbls, retries-1)
+	}
+
+	return oo, nil
+}
+
+func (f *Factory) list(gvr *client.GVR, ns string, wait bool, lbls labels.Selector) ([]runtime.Object, error) {
 	if client.IsAllNamespace(ns) {
 		ns = client.BlankNamespace
 	}
@@ -109,7 +126,24 @@ func (f *Factory) HasSynced(gvr *client.GVR, ns string) (bool, error) {
 }
 
 // Get retrieves a given resource.
-func (f *Factory) Get(gvr *client.GVR, fqn string, wait bool, _ labels.Selector) (runtime.Object, error) {
+func (f *Factory) Get(gvr *client.GVR, fqn string, wait bool, sel labels.Selector) (runtime.Object, error) {
+	return f.getWithRetries(gvr, fqn, wait, sel, 10)
+}
+
+func (f *Factory) getWithRetries(gvr *client.GVR, fqn string, wait bool, sel labels.Selector, retries int) (runtime.Object, error) {
+	o, err := f.get(gvr, fqn, wait, sel)
+	if err != nil {
+		if retries == 0 {
+			return nil, err
+		}
+		time.Sleep(10 * time.Millisecond)
+		return f.getWithRetries(gvr, fqn, wait, sel, retries-1)
+	}
+
+	return o, nil
+}
+
+func (f *Factory) get(gvr *client.GVR, fqn string, wait bool, sel labels.Selector) (runtime.Object, error) {
 	ns, n := namespaced(fqn)
 	if client.IsAllNamespace(ns) {
 		ns = client.BlankNamespace
