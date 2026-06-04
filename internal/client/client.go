@@ -263,13 +263,24 @@ func (a *APIClient) CheckConnectivity() bool {
 		return a.getConnOK()
 	}
 
-	// Check connection
-	if _, err := client.ServerVersion(); err == nil {
+	// Check connection. Tolerate transient blips on slow/flaky links by
+	// retrying the probe before declaring the connection dead.
+	const probeRetries = 3
+	var verr error
+	for i := 0; i <= probeRetries; i++ {
+		if _, verr = client.ServerVersion(); verr == nil {
+			break
+		}
+		if i < probeRetries {
+			time.Sleep(time.Second)
+		}
+	}
+	if verr == nil {
 		if !a.getConnOK() {
 			a.reset()
 		}
 	} else {
-		slog.Error("Unable to fetch server version", slogs.Error, err)
+		slog.Error("Unable to fetch server version", slogs.Error, verr)
 		a.setConnOK(false)
 	}
 

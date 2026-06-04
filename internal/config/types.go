@@ -5,7 +5,7 @@ package config
 
 const (
 	defaultRefreshRate  = 2
-	defaultMaxConnRetry = 5
+	defaultMaxConnRetry = 15
 
 	// CPU tracks cpu usage.
 	CPU = "cpu"
