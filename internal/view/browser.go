@@ -229,25 +229,33 @@ func (b *Browser) BufferActive(state bool, _ model.BufferKind) {
 	if state {
 		return
 	}
-	if err := b.GetModel().Refresh(b.GetContext()); err != nil {
-		slog.Error("Model refresh failed",
-			slogs.GVR, b.GVR(),
-			slogs.Error, err,
-		)
-	}
-	mdata := b.GetModel().Peek()
-	cdata := b.Update(mdata, b.App().Conn().HasMetrics())
-	b.app.QueueUpdateDraw(func() {
-		if b.getUpdating() {
+	// Run the post-filter model refresh off the main goroutine. This callback
+	// fires from the tcell event loop when the filter prompt is accepted/closed;
+	// a synchronous Refresh() does a blocking resource LIST that, on slow links,
+	// freezes all input until it returns. Refresh async and apply via
+	// QueueUpdateDraw so typing/Enter stay responsive.
+	go func() {
+		if err := b.GetModel().Refresh(b.GetContext()); err != nil {
+			slog.Error("Model refresh failed",
+				slogs.GVR, b.GVR(),
+				slogs.Error, err,
+			)
 			return
 		}
-		b.setUpdating(true)
-		defer b.setUpdating(false)
-		b.UpdateUI(cdata, mdata)
-		if b.GetRowCount() > 1 {
-			b.App().filterHistory.Push(b.CmdBuff().GetText())
-		}
-	})
+		mdata := b.GetModel().Peek()
+		cdata := b.Update(mdata, b.App().Conn().HasMetrics())
+		b.app.QueueUpdateDraw(func() {
+			if b.getUpdating() {
+				return
+			}
+			b.setUpdating(true)
+			defer b.setUpdating(false)
+			b.UpdateUI(cdata, mdata)
+			if b.GetRowCount() > 1 {
+				b.App().filterHistory.Push(b.CmdBuff().GetText())
+			}
+		})
+	}()
 }
 
 func (b *Browser) prepareContext() context.Context {

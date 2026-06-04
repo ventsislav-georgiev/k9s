@@ -209,10 +209,10 @@ func (a *App) suggestCommand() model.SuggestionFunc {
 			}
 		}
 
-		namespaceNames, err := a.factory.Client().ValidNamespaceNames()
-		if err != nil {
-			slog.Error("Failed to obtain list of namespaces", slogs.Error, err)
-		}
+		// Non-blocking: read namespaces from cache only. On a cold cache this
+		// returns nil and warms asynchronously, so the suggestion never stalls
+		// the tcell event loop on a slow all-namespaces LIST.
+		namespaceNames, _ := a.factory.Client().CachedNamespaceNames()
 		entries = append(entries, cmd.SuggestSubCommand(s, namespaceNames, contextNames)...)
 		if len(entries) == 0 {
 			return nil

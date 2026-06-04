@@ -164,6 +164,9 @@ func (mockConnection) HasMetrics() bool {
 func (mockConnection) ValidNamespaceNames() (client.NamespaceNames, error) {
 	return nil, nil
 }
+func (mockConnection) CachedNamespaceNames() (client.NamespaceNames, bool) {
+	return nil, false
+}
 func (mockConnection) IsValidNamespace(string) bool {
 	return true
 }
