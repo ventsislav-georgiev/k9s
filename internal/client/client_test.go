@@ -198,3 +198,35 @@ func TestCheckCacheBool(t *testing.T) {
 		})
 	}
 }
+
+// TestCachedNamespaceNamesNonBlocking guards the UI freeze fix: the command
+// suggestion hot path must read namespaces from cache only and never block the
+// caller on a network LIST. Warm cache returns instantly; cold cache returns
+// (nil,false) instantly while warming asynchronously.
+func TestCachedNamespaceNamesNonBlocking(t *testing.T) {
+	t.Run("warm-cache-hit", func(t *testing.T) {
+		c := NewTestAPIClient()
+		want := NamespaceNames{"default": {}, "kube-system": {}}
+		c.cache.Add(cacheNSKey, want, cacheExpiry)
+
+		start := time.Now()
+		got, ok := c.CachedNamespaceNames()
+		elapsed := time.Since(start)
+
+		assert.True(t, ok)
+		assert.Equal(t, want, got)
+		assert.Less(t, elapsed, 50*time.Millisecond, "must not block")
+	})
+
+	t.Run("cold-cache-returns-immediately", func(t *testing.T) {
+		c := NewTestAPIClient()
+
+		start := time.Now()
+		got, ok := c.CachedNamespaceNames()
+		elapsed := time.Since(start)
+
+		assert.False(t, ok)
+		assert.Nil(t, got)
+		assert.Less(t, elapsed, 50*time.Millisecond, "cold cache must not block on network")
+	})
+}
