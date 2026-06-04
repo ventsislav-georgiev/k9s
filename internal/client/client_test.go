@@ -137,6 +137,9 @@ func TestIsValidNamespace(t *testing.T) {
 			cache: NamespaceNames{
 				DefaultNamespace: {},
 			},
+			// Fork assumes cluster-admin: every namespace is valid, so
+			// isValidNamespace short-circuits to true without an API lookup.
+			ok: true,
 		},
 	}
 

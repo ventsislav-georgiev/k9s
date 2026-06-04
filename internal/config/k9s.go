@@ -46,6 +46,7 @@ type K9s struct {
 	UI                  UI         `json:"ui" yaml:"ui"`
 	SkipLatestRevCheck  bool       `json:"skipLatestRevCheck" yaml:"skipLatestRevCheck"`
 	DisablePodCounting  bool       `json:"disablePodCounting" yaml:"disablePodCounting"`
+	DisableMetrics      bool       `json:"disableMetrics" yaml:"disableMetrics,omitempty"`
 	ShellPod            *ShellPod  `json:"shellPod" yaml:"shellPod"`
 	ImageScans          ImageScans `json:"imageScans" yaml:"imageScans"`
 	Logger              Logger     `json:"logger" yaml:"logger"`
@@ -147,6 +148,7 @@ func (k *K9s) Merge(k1 *K9s) {
 	k.UI = k1.UI
 	k.SkipLatestRevCheck = k1.SkipLatestRevCheck
 	k.DisablePodCounting = k1.DisablePodCounting
+	k.DisableMetrics = k1.DisableMetrics
 	k.ShellPod = k1.ShellPod
 	k.Logger = k1.Logger
 	k.ImageScans = k1.ImageScans
