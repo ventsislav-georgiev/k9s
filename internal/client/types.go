@@ -123,6 +123,10 @@ type Connection interface {
 	// ValidNamespaceNames returns all available namespace names.
 	ValidNamespaceNames() (NamespaceNames, error)
 
+	// CachedNamespaceNames returns cached namespace names without a network
+	// call. ok=false means cold cache (async warm kicked off).
+	CachedNamespaceNames() (NamespaceNames, bool)
+
 	// IsValidNamespace checks if given namespace is known.
 	IsValidNamespace(string) bool
 

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/derailed/k9s/internal/slogs"
@@ -64,6 +65,7 @@ type APIClient struct {
 	cache             *cache.LRUExpireCache
 	connOK            bool
 	metricsDisabled   bool
+	nsWarming         int32
 	log               *slog.Logger
 }
 
@@ -254,6 +256,38 @@ func (a *APIClient) ValidNamespaceNames() (NamespaceNames, error) {
 	a.cache.Add(cacheNSKey, nns, cacheExpiry)
 
 	return nns, nil
+}
+
+// CachedNamespaceNames returns namespaces from cache WITHOUT any network call.
+// ok=false means the cache is cold; it kicks off a single async warm so later
+// calls hit the cache. UI hot paths (command suggestions) use this to avoid
+// blocking the tcell event loop on a cold/slow all-namespaces LIST.
+func (a *APIClient) CachedNamespaceNames() (NamespaceNames, bool) {
+	if a == nil {
+		return nil, false
+	}
+	if nn, ok := a.cache.Get(cacheNSKey); ok {
+		if nss, ok := nn.(NamespaceNames); ok {
+			return nss, true
+		}
+	}
+	a.warmNamespaceNames()
+
+	return nil, false
+}
+
+// warmNamespaceNames populates the namespace cache in the background. Guarded by
+// nsWarming so only one fetch runs at a time.
+func (a *APIClient) warmNamespaceNames() {
+	if !atomic.CompareAndSwapInt32(&a.nsWarming, 0, 1) {
+		return
+	}
+	go func() {
+		defer atomic.StoreInt32(&a.nsWarming, 0)
+		if _, err := a.ValidNamespaceNames(); err != nil {
+			slog.Warn("Namespace cache warm failed", slogs.Error, err)
+		}
+	}()
 }
 
 // CheckConnectivity return true if api server is cool or false otherwise.
