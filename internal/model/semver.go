@@ -9,23 +9,30 @@ import (
 	"strconv"
 )
 
-var versionRX = regexp.MustCompile(`\Av(\d+)\.(\d+)\.(\d+)\z`)
+// Accept an optional pre-release/build suffix (e.g. v0.50.18-custom.3) so the
+// core major.minor.patch is still parsed for comparison.
+var versionRX = regexp.MustCompile(`\Av(\d+)\.(\d+)\.(\d+)(?:[-+].*)?\z`)
 
 // SemVer represents a semantic version.
 type SemVer struct {
 	Major, Minor, Patch int
+	raw                 string
 }
 
 // NewSemVer returns a new semantic version.
 func NewSemVer(version string) *SemVer {
-	var v SemVer
-	v.Major, v.Minor, v.Patch = v.parse(NormalizeVersion(version))
+	v := SemVer{raw: NormalizeVersion(version)}
+	v.Major, v.Minor, v.Patch = v.parse(v.raw)
 
 	return &v
 }
 
-// String returns version as a string.
+// String returns version as a string. Preserves the original (incl. any
+// pre-release suffix) so custom builds display their full version.
 func (v *SemVer) String() string {
+	if v.raw != "" {
+		return v.raw
+	}
 	return fmt.Sprintf("v%d.%d.%d", v.Major, v.Minor, v.Patch)
 }
 

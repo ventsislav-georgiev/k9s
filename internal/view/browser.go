@@ -318,7 +318,15 @@ func (b *Browser) TableNoData(mdata *model1.TableData) {
 		b.setUpdating(true)
 		defer b.setUpdating(false)
 		if b.GetColumnCount() == 0 {
-			b.app.Flash().Warnf("No resources found for %s in %q namespace", b.GVR(), client.PrintNamespace(b.GetNamespace()))
+			// The informer cache may still be warming up (e.g. cluster-wide
+			// pods on a large cluster). Don't cry "no resources" until it has
+			// actually synced, otherwise we flash a misleading warning that
+			// clears a few seconds later once data lands.
+			if synced, _ := b.app.factory.HasSynced(b.GVR(), b.GetNamespace()); !synced {
+				b.app.Flash().Infof("Loading %s...", b.GVR())
+			} else {
+				b.app.Flash().Warnf("No resources found for %s in %q namespace", b.GVR(), client.PrintNamespace(b.GetNamespace()))
+			}
 		}
 		b.refreshActions()
 		b.UpdateUI(cdata, mdata)
