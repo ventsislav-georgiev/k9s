@@ -33,6 +33,18 @@ const (
 	cacheMXAPIKey = "metricsAPI"
 	serverVersion = "serverVersion"
 	cacheNSKey    = "validNamespaces"
+
+	// discoveryCacheExpiry controls how long the on-disk API discovery cache
+	// (ServerPreferredResources/ServerGroups) is considered fresh. Discovery is
+	// the most expensive startup call (scales with the number of CRDs) and the
+	// API surface rarely changes mid-session, so cache it well beyond the
+	// generic LRU expiry. Context switches still Invalidate() explicitly.
+	discoveryCacheExpiry = 30 * time.Minute
+
+	// stableCacheExpiry is used for facts that effectively never change during a
+	// session (server version, metrics-API availability). Avoids re-probing the
+	// API server on every refresh tick, which is what stalls on slow links.
+	stableCacheExpiry = time.Hour
 )
 
 var supportedMetricsAPIVersions = []string{"v1beta1"}
@@ -51,6 +63,7 @@ type APIClient struct {
 	mx                sync.RWMutex
 	cache             *cache.LRUExpireCache
 	connOK            bool
+	metricsDisabled   bool
 	log               *slog.Logger
 }
 
@@ -171,7 +184,7 @@ func (a *APIClient) ServerVersion() (*version.Info, error) {
 	if err != nil {
 		return nil, err
 	}
-	a.cache.Add(serverVersion, info, cacheExpiry)
+	a.cache.Add(serverVersion, info, stableCacheExpiry)
 
 	return info, nil
 }
@@ -192,13 +205,12 @@ func (a *APIClient) isValidNamespace(n string) (bool, error) {
 	if IsClusterWide(n) || n == NotNamespaced {
 		return true, nil
 	}
-	nn, err := a.ValidNamespaceNames()
-	if err != nil {
-		return false, err
-	}
-	_, ok := nn[n]
-
-	return ok, nil
+	// This fork assumes cluster-admin access (CanI is bypassed), so every
+	// namespace is valid. Short-circuit here to avoid forcing a cold
+	// all-namespaces LIST on the first namespace switch, which is slow on large
+	// clusters / flaky links. The namespace picker still lists lazily when
+	// actually opened.
+	return true, nil
 }
 
 // ValidNamespaceNames returns all available namespaces.
@@ -294,7 +306,26 @@ func (a *APIClient) Config() *Config {
 
 // HasMetrics checks if the cluster supports metrics.
 func (a *APIClient) HasMetrics() bool {
+	if a.getMetricsDisabled() {
+		return false
+	}
 	return a.supportsMetricsResources() == nil
+}
+
+// SetMetricsDisabled toggles metrics polling. When disabled, HasMetrics always
+// reports false so no node/pod metrics are ever fetched from the API server.
+func (a *APIClient) SetMetricsDisabled(b bool) {
+	a.mx.Lock()
+	defer a.mx.Unlock()
+
+	a.metricsDisabled = b
+}
+
+func (a *APIClient) getMetricsDisabled() bool {
+	a.mx.RLock()
+	defer a.mx.RUnlock()
+
+	return a.metricsDisabled
 }
 
 func (a *APIClient) getMxsClient() *versioned.Clientset {
@@ -454,7 +485,7 @@ func (a *APIClient) CachedDiscovery() (*disk.CachedDiscoveryClient, error) {
 	httpCacheDir := filepath.Join(baseCacheDir, "http")
 	discCacheDir := filepath.Join(baseCacheDir, "discovery", toHostDir(cfg.Host))
 
-	c, err := disk.NewCachedDiscoveryClientForConfig(cfg, discCacheDir, httpCacheDir, cacheExpiry)
+	c, err := disk.NewCachedDiscoveryClientForConfig(cfg, discCacheDir, httpCacheDir, discoveryCacheExpiry)
 	if err != nil {
 		return nil, err
 	}
@@ -556,6 +587,10 @@ func (a *APIClient) checkCacheBool(key string) (state, ok bool) {
 }
 
 func (a *APIClient) supportsMetricsResources() error {
+	if a.getMetricsDisabled() {
+		return metricsUnsupportedErr
+	}
+
 	supported, ok := a.checkCacheBool(cacheMXAPIKey)
 	if ok {
 		if supported {
@@ -565,7 +600,7 @@ func (a *APIClient) supportsMetricsResources() error {
 	}
 
 	defer func() {
-		a.cache.Add(cacheMXAPIKey, supported, cacheExpiry)
+		a.cache.Add(cacheMXAPIKey, supported, stableCacheExpiry)
 	}()
 
 	dial, err := a.Dial()

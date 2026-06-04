@@ -144,6 +144,7 @@ func loadConfiguration() (*config.Config, error) {
 		errs = errors.Join(errs, err)
 	}
 	k9sCfg.K9s.Override(k9sFlags)
+	conn.SetMetricsDisabled(k9sCfg.K9s.DisableMetrics)
 	if err := k9sCfg.Refine(k8sFlags, k9sFlags, k8sCfg); err != nil {
 		slog.Error("Fail to refine k9s config", slogs.Error, err)
 		errs = errors.Join(errs, err)
