@@ -27,6 +27,12 @@ func TestNewSemVer(t *testing.T) {
 			minor:   11,
 			patch:   12,
 		},
+		"prerelease": {
+			version: "v0.50.18-custom.3",
+			major:   0,
+			minor:   50,
+			patch:   18,
+		},
 	}
 
 	for k := range uu {
@@ -38,6 +44,11 @@ func TestNewSemVer(t *testing.T) {
 			assert.Equal(t, u.patch, v.Patch)
 		})
 	}
+}
+
+func TestSemVerStringPreservesSuffix(t *testing.T) {
+	assert.Equal(t, "v0.50.18-custom.3", model.NewSemVer("v0.50.18-custom.3").String())
+	assert.Equal(t, "v1.2.3", model.NewSemVer("1.2.3").String())
 }
 
 func TestSemVerIsCurrent(t *testing.T) {

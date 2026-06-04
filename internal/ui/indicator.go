@@ -49,8 +49,19 @@ func (s *StatusIndicator) StylesChanged(styles *config.Styles) {
 
 const statusIndicatorFmt = "[%s::b]K9s [%s::]%s [%s::]%s:%s:%s [%s::]%s[%s::]::[%s::]%s"
 
+// hasMetrics reports whether cluster metrics are available (metrics-server
+// present and not disabled via config).
+func (s *StatusIndicator) hasMetrics() bool {
+	conn := s.app.Conn()
+	return conn != nil && conn.HasMetrics()
+}
+
 // ClusterInfoUpdated notifies the cluster meta was updated.
 func (s *StatusIndicator) ClusterInfoUpdated(data *model.ClusterMeta) {
+	cpu, mem := render.PrintPerc(data.Cpu), render.PrintPerc(data.Mem)
+	if !s.hasMetrics() {
+		cpu, mem = render.NAValue, render.NAValue
+	}
 	s.app.QueueUpdateDraw(func() {
 		s.SetPermanent(fmt.Sprintf(
 			statusIndicatorFmt,
@@ -62,10 +73,10 @@ func (s *StatusIndicator) ClusterInfoUpdated(data *model.ClusterMeta) {
 			data.Cluster,
 			data.K8sVer,
 			s.styles.K9s.Info.CPUColor.String(),
-			render.PrintPerc(data.Cpu),
+			cpu,
 			s.styles.Body().FgColor.String(),
 			s.styles.K9s.Info.MEMColor.String(),
-			render.PrintPerc(data.Mem),
+			mem,
 		))
 	})
 }
@@ -74,6 +85,10 @@ func (s *StatusIndicator) ClusterInfoUpdated(data *model.ClusterMeta) {
 func (s *StatusIndicator) ClusterInfoChanged(prev, cur *model.ClusterMeta) {
 	if !s.app.IsRunning() {
 		return
+	}
+	cpu, mem := AsPercDelta(prev.Cpu, cur.Cpu), AsPercDelta(prev.Mem, cur.Mem)
+	if !s.hasMetrics() {
+		cpu, mem = render.NAValue, render.NAValue
 	}
 	s.app.QueueUpdateDraw(func() {
 		s.SetPermanent(fmt.Sprintf(
@@ -86,10 +101,10 @@ func (s *StatusIndicator) ClusterInfoChanged(prev, cur *model.ClusterMeta) {
 			cur.Cluster,
 			cur.K8sVer,
 			s.styles.K9s.Info.CPUColor.String(),
-			AsPercDelta(prev.Cpu, cur.Cpu),
+			cpu,
 			s.styles.Body().FgColor.String(),
 			s.styles.K9s.Info.MEMColor.String(),
-			AsPercDelta(prev.Cpu, cur.Mem),
+			mem,
 		))
 	})
 }
