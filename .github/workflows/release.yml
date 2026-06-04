@@ -1,0 +1,89 @@
+name: Release Custom
+
+# Builds a custom k9s (darwin/arm64) on CI, publishes a GitHub release with the
+# tarball, then triggers the homebrew tap to update its formula.
+#
+# Fires on pushing a tag like v0.50.18-custom.1 (won't fire on upstream v* tags).
+# Requires repo secret HOMEBREW_TAP_TOKEN: a PAT with contents:write + the ability
+# to send a repository_dispatch to ventsislav-georgiev/homebrew-k9s.
+
+on:
+  push:
+    tags:
+      - 'v*-custom*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.50.18-custom.1)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install Go
+        uses: actions/setup-go@v6.1.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Resolve version
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build darwin/arm64
+        env:
+          CGO_ENABLED: '0'
+          GOOS: darwin
+          GOARCH: arm64
+        run: |
+          mkdir -p dist
+          go build -trimpath \
+            -ldflags "-s -w \
+              -X github.com/derailed/k9s/cmd.version=${{ steps.ver.outputs.tag }} \
+              -X github.com/derailed/k9s/cmd.commit=${GITHUB_SHA::8} \
+              -X github.com/derailed/k9s/cmd.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o dist/k9s .
+
+      - name: Archive
+        id: archive
+        run: |
+          tar -C dist -czf k9s_Darwin_arm64.tar.gz k9s
+          SHA=$(shasum -a 256 k9s_Darwin_arm64.tar.gz | awk '{print $1}')
+          echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Create / update GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" k9s_Darwin_arm64.tar.gz --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" k9s_Darwin_arm64.tar.gz \
+              --repo "${{ github.repository }}" \
+              --title "$TAG" \
+              --notes "Custom k9s build (darwin/arm64) — rebased fork."
+          fi
+
+      - name: Trigger homebrew formula update
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          gh api repos/ventsislav-georgiev/homebrew-k9s/dispatches \
+            -f event_type=update-formula \
+            -F client_payload[version]="${{ steps.ver.outputs.version }}" \
+            -F client_payload[tag]="${{ steps.ver.outputs.tag }}" \
+            -F client_payload[sha256]="${{ steps.archive.outputs.sha256 }}" \
+            -F client_payload[url]="https://github.com/${{ github.repository }}/releases/download/${{ steps.ver.outputs.tag }}/k9s_Darwin_arm64.tar.gz"
