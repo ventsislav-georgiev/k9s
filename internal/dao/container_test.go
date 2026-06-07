@@ -69,6 +69,7 @@ func (*conn) ActiveNamespace() string                                  { return 
 func (*conn) IsValidNamespace(string) bool                             { return true }
 func (*conn) ValidNamespaceNames() (client.NamespaceNames, error)      { return nil, nil }
 func (*conn) IsActiveNamespace(string) bool                            { return false }
+func (*conn) CachedNamespaceNames() (client.NamespaceNames, bool)      { return nil, false }
 
 type podFactory struct{}
 

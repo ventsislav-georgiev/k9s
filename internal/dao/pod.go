@@ -108,7 +108,22 @@ func (p *Pod) ListImages(_ context.Context, path string) ([]string, error) {
 
 // List returns a collection of nodes.
 func (p *Pod) List(ctx context.Context, ns string) ([]runtime.Object, error) {
-	oo, err := p.Resource.List(ctx, ns)
+	sel, _ := ctx.Value(internal.KeyFields).(string)
+	fsel, err := labels.ConvertSelectorToLabelsMap(sel)
+	if err != nil {
+		return nil, err
+	}
+	nodeName := fsel["spec.nodeName"]
+
+	// For the node->pods drill-in, list server-side with a fieldSelector so we
+	// don't pull every pod in the cluster through the shared informer (slow and
+	// often empty until that cluster-wide cache syncs).
+	var oo []runtime.Object
+	if nodeName != "" {
+		oo, err = p.listByNode(ctx, nodeName)
+	} else {
+		oo, err = p.Resource.List(ctx, ns)
+	}
 	if err != nil {
 		return oo, err
 	}
@@ -117,12 +132,6 @@ func (p *Pod) List(ctx context.Context, ns string) ([]runtime.Object, error) {
 	if withMx, ok := ctx.Value(internal.KeyWithMetrics).(bool); ok && withMx {
 		pmx, _ = client.DialMetrics(p.Client()).FetchPodsMetricsMap(ctx, ns)
 	}
-	sel, _ := ctx.Value(internal.KeyFields).(string)
-	fsel, err := labels.ConvertSelectorToLabelsMap(sel)
-	if err != nil {
-		return nil, err
-	}
-	nodeName := fsel["spec.nodeName"]
 
 	res := make([]runtime.Object, 0, len(oo))
 	for _, o := range oo {
@@ -131,21 +140,39 @@ func (p *Pod) List(ctx context.Context, ns string) ([]runtime.Object, error) {
 			return res, fmt.Errorf("expecting *unstructured.Unstructured but got `%T", o)
 		}
 		fqn := extractFQN(o)
-		if nodeName == "" {
-			res = append(res, &render.PodWithMetrics{Raw: u, MX: pmx[fqn]})
-			continue
-		}
-
-		spec, ok := u.Object["spec"].(map[string]any)
-		if !ok {
-			return res, fmt.Errorf("expecting interface map but got `%T", o)
-		}
-		if spec["nodeName"] == nodeName {
-			res = append(res, &render.PodWithMetrics{Raw: u, MX: pmx[fqn]})
-		}
+		res = append(res, &render.PodWithMetrics{Raw: u, MX: pmx[fqn]})
 	}
 
 	return res, nil
+}
+
+// listByNode fetches pods scheduled on a node directly from the API server
+// using a server-side fieldSelector, bypassing the cluster-wide pod informer.
+func (p *Pod) listByNode(ctx context.Context, nodeName string) ([]runtime.Object, error) {
+	dial, err := p.dynClient()
+	if err != nil {
+		return nil, err
+	}
+	lsel := labels.Everything()
+	if sel, ok := ctx.Value(internal.KeyLabels).(labels.Selector); ok {
+		lsel = sel
+	}
+	cctx, cancel := context.WithTimeout(ctx, p.Client().Config().CallTimeout())
+	defer cancel()
+
+	ll, err := dial.Namespace(client.BlankNamespace).List(cctx, metav1.ListOptions{
+		FieldSelector: "spec.nodeName=" + nodeName,
+		LabelSelector: lsel.String(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	oo := make([]runtime.Object, len(ll.Items))
+	for i := range ll.Items {
+		oo[i] = &ll.Items[i]
+	}
+
+	return oo, nil
 }
 
 // Logs fetch container logs for a given pod and container.
