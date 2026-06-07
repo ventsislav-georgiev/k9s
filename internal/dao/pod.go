@@ -208,6 +208,17 @@ var nodePodsCache = struct {
 	inFlight: map[string]bool{},
 }
 
+// PodsNodeLoading reports whether the node's pods are still being fetched for
+// the first time (no cached result yet). The UI uses this to keep a loading
+// indicator up until data lands.
+func PodsNodeLoading(nodeName string) bool {
+	nodePodsCache.Lock()
+	defer nodePodsCache.Unlock()
+	_, ok := nodePodsCache.data[nodeName]
+
+	return !ok
+}
+
 // cachedNodePods returns the cached pods for a node and triggers a background
 // refresh of that cache. It never blocks on the network, so it is safe to call
 // from the synchronous first Watch refresh on the event loop.
