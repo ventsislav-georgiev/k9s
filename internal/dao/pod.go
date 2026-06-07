@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -108,25 +109,40 @@ func (p *Pod) ListImages(_ context.Context, path string) ([]string, error) {
 
 // List returns a collection of nodes.
 func (p *Pod) List(ctx context.Context, ns string) ([]runtime.Object, error) {
-	// Read from the shared cluster-wide pod informer cache. It syncs once per
-	// session and stays warm, so repeated node->pods drill-ins are instant
-	// (client-side filter below). The cold-sync case shows a "Loading..."
-	// indicator via Browser.TableNoData instead of flashing "no resources".
-	oo, err := p.Resource.List(ctx, ns)
-	if err != nil {
-		return oo, err
-	}
-
-	var pmx client.PodsMetricsMap
-	if withMx, ok := ctx.Value(internal.KeyWithMetrics).(bool); ok && withMx {
-		pmx, _ = client.DialMetrics(p.Client()).FetchPodsMetricsMap(ctx, ns)
-	}
 	sel, _ := ctx.Value(internal.KeyFields).(string)
 	fsel, err := labels.ConvertSelectorToLabelsMap(sel)
 	if err != nil {
 		return nil, err
 	}
 	nodeName := fsel["spec.nodeName"]
+
+	var (
+		oo      []runtime.Object
+		withMx  = false
+		blockMx = true
+	)
+	if v, ok := ctx.Value(internal.KeyWithMetrics).(bool); ok {
+		withMx = v
+	}
+	if nodeName != "" {
+		// node->pods drill-in: list this node's pods directly from the API
+		// server with a server-side fieldSelector. The shared cluster-wide pod
+		// informer is unusable here on large clusters (it lists & decodes EVERY
+		// pod, taking minutes to sync). Metrics must not block this list, so we
+		// warm them in the background and let the next refresh tick fill them in.
+		oo, err = p.listByNode(ctx, nodeName)
+		blockMx = false
+	} else {
+		oo, err = p.Resource.List(ctx, ns)
+	}
+	if err != nil {
+		return oo, err
+	}
+
+	var pmx client.PodsMetricsMap
+	if withMx {
+		pmx = p.podsMetrics(ctx, ns, blockMx)
+	}
 
 	res := make([]runtime.Object, 0, len(oo))
 	for _, o := range oo {
@@ -135,21 +151,74 @@ func (p *Pod) List(ctx context.Context, ns string) ([]runtime.Object, error) {
 			return res, fmt.Errorf("expecting *unstructured.Unstructured but got `%T", o)
 		}
 		fqn := extractFQN(o)
-		if nodeName == "" {
-			res = append(res, &render.PodWithMetrics{Raw: u, MX: pmx[fqn]})
-			continue
-		}
-
-		spec, ok := u.Object["spec"].(map[string]any)
-		if !ok {
-			return res, fmt.Errorf("expecting interface map but got `%T", o)
-		}
-		if spec["nodeName"] == nodeName {
-			res = append(res, &render.PodWithMetrics{Raw: u, MX: pmx[fqn]})
-		}
+		res = append(res, &render.PodWithMetrics{Raw: u, MX: pmx[fqn]})
 	}
 
 	return res, nil
+}
+
+// podMxWarming guards a single in-flight background pod-metrics warm so refresh
+// ticks don't pile up concurrent cluster-wide metrics LISTs.
+var podMxWarming atomic.Bool
+
+// podsMetrics returns the pod metrics map. When block is true it fetches
+// synchronously (legacy behavior). When false it only returns already-cached
+// metrics and warms the cache in the background, so a slow cluster-wide metrics
+// LIST never blocks rendering the (already scoped) pod list.
+func (p *Pod) podsMetrics(ctx context.Context, ns string, block bool) client.PodsMetricsMap {
+	ms := client.DialMetrics(p.Client())
+	if block {
+		pmx, _ := ms.FetchPodsMetricsMap(ctx, ns)
+		return pmx
+	}
+
+	// Fast path: a short deadline still satisfies a cache hit (the cache lookup
+	// happens before any network call), but bounds a cold fetch.
+	cctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	defer cancel()
+	if pmx, err := ms.FetchPodsMetricsMap(cctx, ns); err == nil && len(pmx) > 0 {
+		return pmx
+	}
+
+	// Cold cache: warm it once in the background; this tick renders without
+	// metrics and the next refresh picks them up from cache.
+	if podMxWarming.CompareAndSwap(false, true) {
+		go func() {
+			defer podMxWarming.Store(false)
+			_, _ = ms.FetchPodsMetricsMap(context.Background(), ns)
+		}()
+	}
+
+	return nil
+}
+
+// listByNode fetches pods scheduled on a node directly from the API server
+// using a server-side fieldSelector, bypassing the cluster-wide pod informer.
+func (p *Pod) listByNode(ctx context.Context, nodeName string) ([]runtime.Object, error) {
+	dial, err := p.dynClient()
+	if err != nil {
+		return nil, err
+	}
+	lsel := labels.Everything()
+	if sel, ok := ctx.Value(internal.KeyLabels).(labels.Selector); ok {
+		lsel = sel
+	}
+	cctx, cancel := context.WithTimeout(ctx, p.Client().Config().CallTimeout())
+	defer cancel()
+
+	ll, err := dial.Namespace(client.BlankNamespace).List(cctx, metav1.ListOptions{
+		FieldSelector: "spec.nodeName=" + nodeName,
+		LabelSelector: lsel.String(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	oo := make([]runtime.Object, len(ll.Items))
+	for i := range ll.Items {
+		oo[i] = &ll.Items[i]
+	}
+
+	return oo, nil
 }
 
 // Logs fetch container logs for a given pod and container.
