@@ -79,7 +79,12 @@ func (g *Generic) Get(ctx context.Context, path string) (runtime.Object, error) 
 		return nil, err
 	}
 
-	var opts metav1.GetOptions
+	// ResourceVersion "0" serves the GET from the apiserver watch cache instead
+	// of a consistent etcd quorum read. On large/loaded clusters a single
+	// consistent GET measured ~5.4s vs ~0.3s from the watch cache. All callers
+	// (YAML view, single-instance table refresh) are read-only display paths;
+	// edit shells out to `kubectl edit`, so staleness here is harmless.
+	opts := metav1.GetOptions{ResourceVersion: "0"}
 	if client.IsClusterScoped(ns) {
 		return dial.Get(ctx, n, opts)
 	}

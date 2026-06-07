@@ -348,29 +348,23 @@ func (p *Pod) GetInstance(fqn string) (*v1.Pod, error) {
 // pod informer -- blocks the UI up to ~10*defaultWaitTime (~5s) and may error
 // with "failed to locate pod", and also avoids spinning up a spurious informer
 // + watch just to read a single pod.
-func fetchPodSpec(f Factory, c client.Connection, fqn string) (*v1.Pod, error) {
-	if o, err := f.Get(client.PodGVR, fqn, false, labels.Everything()); err == nil {
-		if u, ok := o.(*unstructured.Unstructured); ok {
-			var po v1.Pod
-			if e := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &po); e == nil {
-				return &po, nil
-			}
-		}
-	}
+// FetchPod returns a pod spec without blocking the UI on a cold informer
+// cache (non-blocking cache read + direct server-side GET fallback).
+func FetchPod(f Factory, fqn string) (*v1.Pod, error) {
+	return fetchPodSpec(f, f.Client(), fqn)
+}
 
-	ns, n := client.Namespaced(fqn)
-	dial, err := c.DynDial()
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), c.Config().CallTimeout())
-	defer cancel()
-	o, err := dial.Resource(client.PodGVR.GVR()).Namespace(ns).Get(ctx, n, metav1.GetOptions{ResourceVersion: "0"})
+func fetchPodSpec(f Factory, c client.Connection, fqn string) (*v1.Pod, error) {
+	o, err := cachedOrDirectGet(f, c, client.PodGVR, fqn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to locate pod %q: %w", fqn, err)
 	}
+	u, ok := o.(*unstructured.Unstructured)
+	if !ok {
+		return nil, fmt.Errorf("expecting *unstructured.Unstructured for pod %q but got %T", fqn, o)
+	}
 	var po v1.Pod
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(o.Object, &po); err != nil {
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &po); err != nil {
 		return nil, err
 	}
 
