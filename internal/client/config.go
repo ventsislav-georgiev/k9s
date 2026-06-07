@@ -24,6 +24,14 @@ const (
 
 	// UsePersistentConfig caches client config to avoid reloads.
 	UsePersistentConfig = true
+
+	// defaultQPS/defaultBurst raise client-go's stock 5/10 rate limits. k9s
+	// funnels many informer LISTs, discovery, and CanI auth checks through a
+	// single rate limiter; the stock limit throttles large initial syncs
+	// (e.g. cluster-wide pods) to a crawl. Modern API servers have server-side
+	// Priority & Fairness, so a generous client-side limit is safe.
+	defaultQPS   float32 = 50
+	defaultBurst int     = 100
 )
 
 // Config tracks a kubernetes configuration.
@@ -60,6 +68,14 @@ func (c *Config) RESTConfig() (*restclient.Config, error) {
 	}
 	if c.proxy != nil {
 		cfg.Proxy = c.proxy
+	}
+	// Only raise the defaults when the kubeconfig/flags didn't specify them
+	// (client-go leaves these at 0, then applies its stock 5/10).
+	if cfg.QPS == 0 {
+		cfg.QPS = defaultQPS
+	}
+	if cfg.Burst == 0 {
+		cfg.Burst = defaultBurst
 	}
 
 	return cfg, nil
