@@ -87,7 +87,11 @@ func (b *Browser) Init(ctx context.Context) error {
 		return e
 	}
 	ns := client.CleanseNamespace(b.app.Config.ActiveNamespace())
-	if dao.IsK8sMeta(b.meta) && b.app.ConOK() {
+	// node->pods drill-in lists server-side per node (dao.Pod) and refreshes on
+	// a timer, so it does NOT need the shared cluster-wide pod informer. Starting
+	// it here would list & decode every pod in the cluster and starve the scoped
+	// list, so skip it for node-scoped views.
+	if dao.IsK8sMeta(b.meta) && b.app.ConOK() && b.nodeScopedName() == "" {
 		if _, e := b.app.factory.CanForResource(ns, b.GVR(), client.ListAccess); e != nil {
 			return e
 		}
@@ -285,6 +289,29 @@ func (b *Browser) refresh() {
 	b.Start()
 }
 
+// nodeScopedName returns the node name when this is a node->pods drill-in view
+// (its field selector pins spec.nodeName), else "". Works before Start by
+// peeking the context function, which is set when the view is created.
+func (b *Browser) nodeScopedName() string {
+	const prefix = "spec.nodeName="
+	fieldSel := ""
+	if b.contextFn != nil {
+		if ctx := b.contextFn(context.Background()); ctx != nil {
+			fieldSel, _ = ctx.Value(internal.KeyFields).(string)
+		}
+	}
+	if fieldSel == "" {
+		if ctx := b.GetContext(); ctx != nil {
+			fieldSel, _ = ctx.Value(internal.KeyFields).(string)
+		}
+	}
+	if strings.HasPrefix(fieldSel, prefix) {
+		return strings.TrimPrefix(fieldSel, prefix)
+	}
+
+	return ""
+}
+
 // Name returns the component name.
 func (b *Browser) Name() string { return b.meta.Kind }
 
@@ -310,6 +337,15 @@ func (b *Browser) TableNoData(mdata *model1.TableData) {
 	b.mx.RUnlock()
 
 	if !b.app.ConOK() || cancel == nil || !b.app.IsRunning() {
+		return
+	}
+	// node->pods loads asynchronously (server-side, per node). Keep a loading
+	// indicator up on every empty refresh tick until the first fetch lands, so
+	// it stays visible instead of flashing once and vanishing.
+	if node := b.nodeScopedName(); node != "" && dao.PodsNodeLoading(node) {
+		b.app.QueueUpdateDraw(func() {
+			b.app.Flash().Infof("Loading pods on %s...", node)
+		})
 		return
 	}
 	// Skip warning on first view (likely during initialization)
