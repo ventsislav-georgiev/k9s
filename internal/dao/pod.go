@@ -128,15 +128,20 @@ func (p *Pod) List(ctx context.Context, ns string) ([]runtime.Object, error) {
 		// node->pods drill-in: list this node's pods directly from the API
 		// server with a server-side fieldSelector. The shared cluster-wide pod
 		// informer is unusable here on large clusters (it lists & decodes EVERY
-		// pod, taking minutes to sync). Metrics must not block this list, so we
-		// warm them in the background and let the next refresh tick fill them in.
-		oo, err = p.listByNode(ctx, nodeName)
+		// pod, taking minutes to sync).
+		//
+		// The model's first Watch refresh runs synchronously on the tcell event
+		// loop; a blocking REST call there freezes the UI. So this returns
+		// cached pods immediately (nil on a cold cache) and refreshes in the
+		// background. The model's updater tick then picks up the fresh list.
+		// Metrics are likewise non-blocking for this view.
+		oo = p.cachedNodePods(ctx, nodeName)
 		blockMx = false
 	} else {
 		oo, err = p.Resource.List(ctx, ns)
-	}
-	if err != nil {
-		return oo, err
+		if err != nil {
+			return oo, err
+		}
 	}
 
 	var pmx client.PodsMetricsMap
@@ -192,16 +197,54 @@ func (p *Pod) podsMetrics(ctx context.Context, ns string, block bool) client.Pod
 	return nil
 }
 
-// listByNode fetches pods scheduled on a node directly from the API server
-// using a server-side fieldSelector, bypassing the cluster-wide pod informer.
-func (p *Pod) listByNode(ctx context.Context, nodeName string) ([]runtime.Object, error) {
-	dial, err := p.dynClient()
-	if err != nil {
-		return nil, err
-	}
+// nodePodsCache holds the most recently fetched pods per node, plus a
+// single-flight flag so refresh ticks don't pile up concurrent fetches.
+var nodePodsCache = struct {
+	sync.Mutex
+	data     map[string][]runtime.Object
+	inFlight map[string]bool
+}{
+	data:     map[string][]runtime.Object{},
+	inFlight: map[string]bool{},
+}
+
+// cachedNodePods returns the cached pods for a node and triggers a background
+// refresh of that cache. It never blocks on the network, so it is safe to call
+// from the synchronous first Watch refresh on the event loop.
+func (p *Pod) cachedNodePods(ctx context.Context, nodeName string) []runtime.Object {
 	lsel := labels.Everything()
 	if sel, ok := ctx.Value(internal.KeyLabels).(labels.Selector); ok {
 		lsel = sel
+	}
+
+	nodePodsCache.Lock()
+	cached := nodePodsCache.data[nodeName]
+	if !nodePodsCache.inFlight[nodeName] {
+		nodePodsCache.inFlight[nodeName] = true
+		go func() {
+			oo, err := p.listByNode(context.Background(), nodeName, lsel)
+			nodePodsCache.Lock()
+			nodePodsCache.inFlight[nodeName] = false
+			if err == nil {
+				nodePodsCache.data[nodeName] = oo
+			}
+			nodePodsCache.Unlock()
+			if err != nil {
+				slog.Error("Unable to list node pods", slogs.ResName, nodeName, slogs.Error, err)
+			}
+		}()
+	}
+	nodePodsCache.Unlock()
+
+	return cached
+}
+
+// listByNode fetches pods scheduled on a node directly from the API server
+// using a server-side fieldSelector, bypassing the cluster-wide pod informer.
+func (p *Pod) listByNode(ctx context.Context, nodeName string, lsel labels.Selector) ([]runtime.Object, error) {
+	dial, err := p.dynClient()
+	if err != nil {
+		return nil, err
 	}
 	cctx, cancel := context.WithTimeout(ctx, p.Client().Config().CallTimeout())
 	defer cancel()
