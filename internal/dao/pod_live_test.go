@@ -94,15 +94,15 @@ func TestLiveNodePods(t *testing.T) {
 	_, gerr := c.getFactory().Get(client.PodGVR, fqn, false, labels.Everything())
 	t.Logf("PhaseA Get(wait=false) cold: err=%v in %s", gerr, time.Since(start))
 
-	// Phase B: direct server-side GET.
+	// Phase B: Container.fetchPod (non-blocking cache miss -> direct GET RV=0).
 	start = time.Now()
-	po, err := c.getPodDirect(fqn)
+	po, err := c.fetchPod(fqn)
 	if err != nil {
-		t.Fatalf("getPodDirect: %v", err)
+		t.Fatalf("fetchPod: %v", err)
 	}
-	t.Logf("PhaseB getPodDirect %q: %d containers in %s", fqn, len(po.Spec.Containers), time.Since(start))
+	t.Logf("PhaseB fetchPod %q: %d containers in %s", fqn, len(po.Spec.Containers), time.Since(start))
 
-	// Phase C: full fetchPod again (cache may now be warming).
+	// Phase C: full fetchPod again (cache may now be warm).
 	start = time.Now()
 	_, _ = c.fetchPod(fqn)
 	t.Logf("PhaseC fetchPod: %s", time.Since(start))
@@ -122,4 +122,27 @@ func TestLiveNodePods(t *testing.T) {
 	start = time.Now()
 	_, derr = fresh.Resource(client.PodGVR.GVR()).Namespace(dns).Get(gctx, dn, metav1.GetOptions{ResourceVersion: "0"})
 	t.Logf("PhaseD fresh dyn GET: err=%v in %s", derr, time.Since(start))
+
+	// Phase E: real log path. TailLogs setup must NOT freeze the UI (it runs on
+	// the event loop) -- it now uses fetchPodSpec (non-blocking + direct GET)
+	// instead of fac.Get(wait=true). Measure setup, then confirm a line flows.
+	var lp Pod
+	lp.Init(f, client.PodGVR)
+	lctx := context.WithValue(context.Background(), internal.KeyFactory, f)
+	lctx, lcancel := context.WithCancel(lctx)
+	defer lcancel()
+	opts := &LogOptions{Path: fqn, Lines: 10, AllContainers: true}
+	start = time.Now()
+	chans, lerr := lp.TailLogs(lctx, opts)
+	t.Logf("PhaseE TailLogs setup: %d streams, err=%v in %s", len(chans), lerr, time.Since(start))
+	if lerr == nil && len(chans) > 0 {
+		select {
+		case it := <-chans[0]:
+			if it != nil {
+				t.Logf("PhaseE first log line: %d bytes", len(it.Bytes))
+			}
+		case <-time.After(10 * time.Second):
+			t.Logf("PhaseE: no log line within 10s (container may be quiet)")
+		}
+	}
 }
