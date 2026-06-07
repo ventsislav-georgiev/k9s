@@ -80,7 +80,13 @@ Wanna discuss K9s features with your fellow `K9sers` or simply show your support
 K9s is available on Linux, macOS and Windows platforms.
 Binaries for Linux, Windows and Mac are available as tarballs in the [release page](https://github.com/derailed/k9s/releases).
 
-* Via [Homebrew](https://brew.sh/) for macOS or Linux
+* Via [Homebrew](https://brew.sh/) — this custom fork (macOS arm64)
+
+   ```shell
+   brew install ventsislav-georgiev/tap/k9s
+   ```
+
+* Via [Homebrew](https://brew.sh/) — upstream k9s for macOS or Linux
 
    ```shell
    brew install derailed/k9s/k9s
