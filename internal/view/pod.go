@@ -25,9 +25,6 @@ import (
 	"github.com/fatih/color"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 )
 
@@ -531,18 +528,7 @@ func fetchContainers(meta *metav1.ObjectMeta, spec *v1.PodSpec, allContainers bo
 }
 
 func fetchPod(f dao.Factory, path string) (*v1.Pod, error) {
-	o, err := f.Get(client.PodGVR, path, true, labels.Everything())
-	if err != nil {
-		return nil, err
-	}
-
-	var pod v1.Pod
-	err = runtime.DefaultUnstructuredConverter.FromUnstructured(o.(*unstructured.Unstructured).Object, &pod)
-	if err != nil {
-		return nil, err
-	}
-
-	return &pod, nil
+	return dao.FetchPod(f, path)
 }
 
 func podIsRunning(f dao.Factory, fqn string) bool {

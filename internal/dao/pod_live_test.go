@@ -145,4 +145,18 @@ func TestLiveNodePods(t *testing.T) {
 			t.Logf("PhaseE: no log line within 10s (container may be quiet)")
 		}
 	}
+
+	// Phase F: Describe (kubectl describe.Describer -> its own clientset built
+	// from Config().Flags(), + RESTMapper discovery + Events fetch).
+	start = time.Now()
+	desc, ferr := Describe(conn, client.PodGVR, fqn)
+	t.Logf("PhaseF Describe: %d bytes, err=%v in %s", len(desc), ferr, time.Since(start))
+	start = time.Now()
+	desc2, _ := Describe(conn, client.PodGVR, fqn)
+	t.Logf("PhaseF Describe #2 (warm mapper?): %d bytes in %s", len(desc2), time.Since(start))
+
+	// Phase G: YAML path (Generic.Get -> dynamic GET, no RV=0).
+	start = time.Now()
+	_, gerr2 := lp.ToYAML(fqn, false)
+	t.Logf("PhaseG ToYAML: err=%v in %s", gerr2, time.Since(start))
 }

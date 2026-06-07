@@ -208,7 +208,9 @@ func (n *Node) yamlCmd(evt *tcell.EventKey) *tcell.EventKey {
 		n.App().Flash().Err(err)
 		return nil
 	}
-	o, err := dial.Resource(gvr).Get(ctx, sel, metav1.GetOptions{})
+	// RV=0 serves from the apiserver watch cache, not a consistent etcd read
+	// (multi-second on large clusters). This runs on the tcell event loop.
+	o, err := dial.Resource(gvr).Get(ctx, sel, metav1.GetOptions{ResourceVersion: "0"})
 	if err != nil {
 		n.App().Flash().Errf("Unable to get resource %q -- %s", n.GVR(), err)
 		return nil
