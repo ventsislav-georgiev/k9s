@@ -341,20 +341,53 @@ func (p *Pod) GetInstance(fqn string) (*v1.Pod, error) {
 	return &pod, nil
 }
 
+// fetchPodSpec reads a pod non-blocking from the informer cache, falling back
+// to a direct server-side GET (ResourceVersion=0, served from the apiserver
+// watch cache) when the cache is cold. This avoids fac.Get(wait=true), which on
+// a cold cache -- e.g. node-scoped drill-ins that intentionally never start the
+// pod informer -- blocks the UI up to ~10*defaultWaitTime (~5s) and may error
+// with "failed to locate pod", and also avoids spinning up a spurious informer
+// + watch just to read a single pod.
+func fetchPodSpec(f Factory, c client.Connection, fqn string) (*v1.Pod, error) {
+	if o, err := f.Get(client.PodGVR, fqn, false, labels.Everything()); err == nil {
+		if u, ok := o.(*unstructured.Unstructured); ok {
+			var po v1.Pod
+			if e := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &po); e == nil {
+				return &po, nil
+			}
+		}
+	}
+
+	ns, n := client.Namespaced(fqn)
+	dial, err := c.DynDial()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.Config().CallTimeout())
+	defer cancel()
+	o, err := dial.Resource(client.PodGVR.GVR()).Namespace(ns).Get(ctx, n, metav1.GetOptions{ResourceVersion: "0"})
+	if err != nil {
+		return nil, fmt.Errorf("failed to locate pod %q: %w", fqn, err)
+	}
+	var po v1.Pod
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(o.Object, &po); err != nil {
+		return nil, err
+	}
+
+	return &po, nil
+}
+
 // TailLogs tails a given container logs.
 func (p *Pod) TailLogs(ctx context.Context, opts *LogOptions) ([]LogChan, error) {
 	fac, ok := ctx.Value(internal.KeyFactory).(*watch.Factory)
 	if !ok {
 		return nil, errors.New("no factory in context")
 	}
-	o, err := fac.Get(p.gvr, opts.Path, true, labels.Everything())
+	pop, err := fetchPodSpec(fac, p.Client(), opts.Path)
 	if err != nil {
 		return nil, err
 	}
-	var po v1.Pod
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(o.(*unstructured.Unstructured).Object, &po); err != nil {
-		return nil, err
-	}
+	po := *pop
 	coCounts := len(po.Spec.InitContainers) + len(po.Spec.Containers) + len(po.Spec.EphemeralContainers)
 	if coCounts == 1 {
 		opts.SingleContainer = true
