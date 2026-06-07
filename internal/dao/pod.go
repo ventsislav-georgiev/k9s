@@ -263,6 +263,11 @@ func (p *Pod) listByNode(ctx context.Context, nodeName string, lsel labels.Selec
 	ll, err := dial.Namespace(client.BlankNamespace).List(cctx, metav1.ListOptions{
 		FieldSelector: "spec.nodeName=" + nodeName,
 		LabelSelector: lsel.String(),
+		// ResourceVersion "0" serves the list from the apiserver watch cache
+		// (which has a spec.nodeName index) instead of a consistent etcd read
+		// that scans every pod in the cluster. Much faster on large clusters;
+		// the slight staleness is irrelevant since we re-list each refresh.
+		ResourceVersion: "0",
 	})
 	if err != nil {
 		return nil, err
