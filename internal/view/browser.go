@@ -180,14 +180,24 @@ func (b *Browser) Start() {
 	b.GetModel().AddListener(b)
 	b.Table.Start()
 	b.CmdBuff().AddListener(b)
-	if err := b.GetModel().Watch(b.prepareContext()); err != nil {
-		go func() {
+	// Watch's initial refresh does a blocking resource LIST. Running it on the
+	// tcell event loop freezes all input until it returns -- most visible when
+	// popping back from a child view (ESC out of logs/yaml): StackPopped calls
+	// the revealed view's Start synchronously, so the UI hangs a couple seconds
+	// before it exits. Run it off the event loop; cached model rows render
+	// immediately and the refresh repopulates async (same as the updater loop).
+	ctx := b.prepareContext()
+	go func() {
+		if err := b.GetModel().Watch(ctx); err != nil {
+			if ctx.Err() != nil {
+				return // view was stopped/swapped before the initial list returned
+			}
 			time.Sleep(500 * time.Millisecond)
 			b.app.QueueUpdateDraw(func() {
 				b.App().Flash().Errf("Watcher failed for %s -- %s", b.GVR(), err)
 			})
-		}()
-	}
+		}
+	}()
 }
 
 // Stop terminates browser updates.
