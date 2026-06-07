@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -76,6 +77,15 @@ func (c *Config) RESTConfig() (*restclient.Config, error) {
 	}
 	if cfg.Burst == 0 {
 		cfg.Burst = defaultBurst
+	}
+	// Force HTTP/1.1 by default. On large clusters k9s multiplexes all requests
+	// over a single HTTP/2 connection, where long-lived WATCH streams
+	// head-of-line-block foreground GET/LIST calls -- a single pod GET measured
+	// 7.5s while the cluster was idle, vs 0.2s over HTTP/1.1 (which uses a pool
+	// of separate TCP connections). GKE's konnectivity proxy worsens this.
+	// Set K9S_ENABLE_HTTP2 to restore HTTP/2.
+	if os.Getenv("K9S_ENABLE_HTTP2") == "" {
+		cfg.NextProtos = []string{"http/1.1"}
 	}
 
 	return cfg, nil

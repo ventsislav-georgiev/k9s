@@ -15,6 +15,9 @@ import (
 	"github.com/derailed/k9s/internal"
 	"github.com/derailed/k9s/internal/client"
 	"github.com/derailed/k9s/internal/watch"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 )
@@ -72,4 +75,51 @@ func TestLiveNodePods(t *testing.T) {
 	start = time.Now()
 	second, _ := p.List(ctx, client.BlankNamespace)
 	t.Logf("List #2 (warm): %d pods in %s", len(second), time.Since(start))
+
+	// 3) Container.fetchPod with a COLD pod informer (the node-scoped drill-in
+	//    case). Must be fast via the direct server-side GET fallback, NOT the
+	//    ~5s waitForCacheSync*retries that previously froze the UI and errored
+	//    with "failed to locate pod".
+	if len(oo) == 0 {
+		t.Skip("node has no pods to probe containers")
+	}
+	u, _ := oo[0].(*unstructured.Unstructured)
+	fqn := u.GetNamespace() + "/" + u.GetName()
+
+	var c Container
+	c.Init(f, client.NewGVR("containers"))
+
+	// Phase A: cold informer cache read (wait=false).
+	start = time.Now()
+	_, gerr := c.getFactory().Get(client.PodGVR, fqn, false, labels.Everything())
+	t.Logf("PhaseA Get(wait=false) cold: err=%v in %s", gerr, time.Since(start))
+
+	// Phase B: direct server-side GET.
+	start = time.Now()
+	po, err := c.getPodDirect(fqn)
+	if err != nil {
+		t.Fatalf("getPodDirect: %v", err)
+	}
+	t.Logf("PhaseB getPodDirect %q: %d containers in %s", fqn, len(po.Spec.Containers), time.Since(start))
+
+	// Phase C: full fetchPod again (cache may now be warming).
+	start = time.Now()
+	_, _ = c.fetchPod(fqn)
+	t.Logf("PhaseC fetchPod: %s", time.Since(start))
+
+	// Phase D: FRESH dynamic client from the same RESTConfig (isolates whether
+	// slowness is the config or the shared/cached DynDial client + transport).
+	rc, _ := cfg.RESTConfig()
+	t.Logf("PhaseD cfg: QPS=%v Burst=%v Timeout=%v WrapTransport=%v Proxy=%v RateLimiter=%v",
+		rc.QPS, rc.Burst, rc.Timeout, rc.WrapTransport != nil, rc.Proxy != nil, rc.RateLimiter != nil)
+	fresh, derr := dynamic.NewForConfig(rc)
+	if derr != nil {
+		t.Fatalf("fresh dyn: %v", derr)
+	}
+	dns, dn := client.Namespaced(fqn)
+	gctx, gcancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer gcancel()
+	start = time.Now()
+	_, derr = fresh.Resource(client.PodGVR.GVR()).Namespace(dns).Get(gctx, dn, metav1.GetOptions{ResourceVersion: "0"})
+	t.Logf("PhaseD fresh dyn GET: err=%v in %s", derr, time.Since(start))
 }
