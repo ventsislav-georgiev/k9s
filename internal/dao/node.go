@@ -170,10 +170,12 @@ func (n *Node) List(ctx context.Context, ns string) ([]runtime.Object, error) {
 	shouldCountPods, _ := ctx.Value(internal.KeyPodCounting).(bool)
 	var pods []runtime.Object
 	if shouldCountPods {
-		pods, err = n.getFactory().List(client.PodGVR, client.BlankNamespace, false, labels.Everything())
-		if err != nil {
-			slog.Error("Unable to list pods", slogs.Error, err)
-		}
+		// Count from a cached server-side list (RV=0, watch cache), non-blocking.
+		// The cluster-wide pod informer (factory.List) never finishes its initial
+		// sync on large clusters, so wait=false returned empty and every node
+		// showed 0/NA. Cold cache returns nil this tick; the background refresh
+		// fills it and the next refresh paints real counts.
+		pods = cachedDirectListFor(n.Client(), client.PodGVR, client.BlankNamespace, labels.Everything())
 	}
 	res := make([]runtime.Object, 0, len(oo))
 	for _, o := range oo {

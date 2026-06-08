@@ -70,14 +70,23 @@ var directListCache = struct {
 // (gvr,namespace,selector) and triggers a background server-side LIST (RV=0) to
 // refresh it. It never blocks on the network, so it is safe on any caller.
 func (r *Resource) cachedDirectList(ns string, lsel labels.Selector) []runtime.Object {
-	key := r.gvr.String() + "\x00" + ns + "\x00" + lsel.String()
+	return cachedDirectListFor(r.Client(), r.gvr, ns, lsel)
+}
+
+// cachedDirectListFor returns the cached direct-list result for an explicit
+// (gvr,namespace,selector) and triggers a background server-side LIST (RV=0) to
+// refresh it. It never blocks on the network, so it is safe to call from the
+// event loop -- e.g. counting pods per node without syncing the cluster-wide
+// pod informer (which never finishes on large clusters).
+func cachedDirectListFor(c client.Connection, gvr *client.GVR, ns string, lsel labels.Selector) []runtime.Object {
+	key := gvr.String() + "\x00" + ns + "\x00" + lsel.String()
 
 	directListCache.Lock()
 	cached := directListCache.data[key]
 	if !directListCache.inFlight[key] {
 		directListCache.inFlight[key] = true
 		go func() {
-			oo, err := directList(r.Client(), r.gvr, ns, lsel)
+			oo, err := directList(c, gvr, ns, lsel)
 			directListCache.Lock()
 			directListCache.inFlight[key] = false
 			if err == nil {
@@ -85,7 +94,7 @@ func (r *Resource) cachedDirectList(ns string, lsel labels.Selector) []runtime.O
 			}
 			directListCache.Unlock()
 			if err != nil {
-				slog.Error("Direct list failed", slogs.GVR, r.gvr, slogs.Namespace, ns, slogs.Error, err)
+				slog.Error("Direct list failed", slogs.GVR, gvr, slogs.Namespace, ns, slogs.Error, err)
 			}
 		}()
 	}
