@@ -85,7 +85,7 @@ func (d *Deployment) Pod(fqn string) (string, error) {
 
 // GetInstance fetch a matching deployment.
 func (d *Deployment) GetInstance(fqn string) (*appsv1.Deployment, error) {
-	o, err := d.Factory.Get(d.gvr, fqn, true, labels.Everything())
+	o, err := cachedOrDirectGet(d.getFactory(), d.Client(), d.gvr, fqn)
 	if err != nil {
 		return nil, err
 	}

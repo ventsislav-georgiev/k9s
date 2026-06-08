@@ -19,7 +19,6 @@ import (
 	"github.com/derailed/tcell/v2"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/portforward"
 )
@@ -210,7 +209,7 @@ func showFwdDialog(v ResourceViewer, path string, cb PortForwardCB) error {
 
 func fetchPodPorts(f *watch.Factory, path string) (ports map[string][]v1.ContainerPort, anns map[string]string, err error) {
 	slog.Debug("Fetching ports on pod", slogs.FQN, path)
-	o, err := f.Get(client.PodGVR, path, true, labels.Everything())
+	o, err := dao.FetchObject(f, client.PodGVR, path)
 	if err != nil {
 		return nil, nil, err
 	}

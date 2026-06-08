@@ -54,7 +54,7 @@ func (c *CronJob) Run(path string) error {
 		return fmt.Errorf("user is not authorized to run jobs")
 	}
 
-	o, err := c.getFactory().Get(c.gvr, path, true, labels.Everything())
+	o, err := cachedOrDirectGet(c.getFactory(), c.Client(), c.gvr, path)
 	if err != nil {
 		return err
 	}
@@ -126,7 +126,7 @@ func (c *CronJob) ScanSA(_ context.Context, fqn string, wait bool) (Refs, error)
 
 // GetInstance fetch a matching cronjob.
 func (c *CronJob) GetInstance(fqn string) (*batchv1.CronJob, error) {
-	o, err := c.getFactory().Get(c.gvr, fqn, true, labels.Everything())
+	o, err := cachedOrDirectGet(c.getFactory(), c.Client(), c.gvr, fqn)
 	if err != nil {
 		return nil, err
 	}

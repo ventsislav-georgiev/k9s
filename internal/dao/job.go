@@ -74,7 +74,7 @@ func (j *Job) List(ctx context.Context, ns string) ([]runtime.Object, error) {
 
 // TailLogs tail logs for all pods represented by this Job.
 func (j *Job) TailLogs(ctx context.Context, opts *LogOptions) ([]LogChan, error) {
-	o, err := j.getFactory().Get(j.gvr, opts.Path, true, labels.Everything())
+	o, err := cachedOrDirectGet(j.getFactory(), j.Client(), j.gvr, opts.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +93,7 @@ func (j *Job) TailLogs(ctx context.Context, opts *LogOptions) ([]LogChan, error)
 }
 
 func (j *Job) GetInstance(fqn string) (*batchv1.Job, error) {
-	o, err := j.getFactory().Get(j.gvr, fqn, true, labels.Everything())
+	o, err := cachedOrDirectGet(j.getFactory(), j.Client(), j.gvr, fqn)
 	if err != nil {
 		return nil, err
 	}

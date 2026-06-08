@@ -19,6 +19,7 @@ import (
 
 	"github.com/derailed/k9s/internal/client"
 	"github.com/derailed/k9s/internal/config"
+	"github.com/derailed/k9s/internal/dao"
 	"github.com/derailed/k9s/internal/model"
 	"github.com/derailed/k9s/internal/render"
 	"github.com/derailed/k9s/internal/slogs"
@@ -29,7 +30,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -420,7 +420,7 @@ func launchShellPod(ctx context.Context, a *App, node string) error {
 	}
 
 	for i := range k9sShellRetryCount {
-		o, err := a.factory.Get(client.PodGVR, client.FQN(spo.Namespace, k9sShellPodName()), true, labels.Everything())
+		o, err := dao.FetchObject(a.factory, client.PodGVR, client.FQN(spo.Namespace, k9sShellPodName()))
 		if err != nil {
 			select {
 			case <-ctx.Done():

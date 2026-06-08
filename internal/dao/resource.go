@@ -169,6 +169,17 @@ func cachedOrDirectGet(f Factory, c client.Connection, gvr *client.GVR, path str
 	return res.Namespace(ns).Get(ctx, n, opts)
 }
 
+// FetchObject returns a single object without blocking the UI on a cold
+// informer cache: it reads the cache non-blocking, then falls back to a direct
+// server-side GET (RV=0). Use this from event-loop handlers (drill-ins,
+// display/decode actions) instead of Factory.Get(wait=true), which on a cold
+// cache blocks up to ~5s and then errors "not found" -- the sporadic freeze
+// seen right after a list is painted from the direct-list fallback (informer
+// not yet synced).
+func FetchObject(f Factory, gvr *client.GVR, fqn string) (runtime.Object, error) {
+	return cachedOrDirectGet(f, f.Client(), gvr, fqn)
+}
+
 // ToYAML returns a resource yaml.
 func (r *Resource) ToYAML(path string, showManaged bool) (string, error) {
 	o, err := r.Get(context.Background(), path)

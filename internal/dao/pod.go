@@ -412,18 +412,7 @@ func (*Pod) Pod(fqn string) (string, error) {
 
 // GetInstance returns a pod instance.
 func (p *Pod) GetInstance(fqn string) (*v1.Pod, error) {
-	o, err := p.getFactory().Get(p.gvr, fqn, true, labels.Everything())
-	if err != nil {
-		return nil, err
-	}
-
-	var pod v1.Pod
-	err = runtime.DefaultUnstructuredConverter.FromUnstructured(o.(*unstructured.Unstructured).Object, &pod)
-	if err != nil {
-		return nil, err
-	}
-
-	return &pod, nil
+	return fetchPodSpec(p.getFactory(), p.Client(), fqn)
 }
 
 // fetchPodSpec reads a pod non-blocking from the informer cache, falling back
