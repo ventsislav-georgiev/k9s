@@ -116,6 +116,11 @@ func (p *Pod) List(ctx context.Context, ns string) ([]runtime.Object, error) {
 	}
 	nodeName := fsel["spec.nodeName"]
 
+	lsel := labels.Everything()
+	if s, ok := ctx.Value(internal.KeyLabels).(labels.Selector); ok && s != nil {
+		lsel = s
+	}
+
 	var (
 		oo      []runtime.Object
 		withMx  = false
@@ -124,7 +129,8 @@ func (p *Pod) List(ctx context.Context, ns string) ([]runtime.Object, error) {
 	if v, ok := ctx.Value(internal.KeyWithMetrics).(bool); ok {
 		withMx = v
 	}
-	if nodeName != "" {
+	switch {
+	case nodeName != "":
 		// node->pods drill-in: list this node's pods directly from the API
 		// server with a server-side fieldSelector. The shared cluster-wide pod
 		// informer is unusable here on large clusters (it lists & decodes EVERY
@@ -137,7 +143,16 @@ func (p *Pod) List(ctx context.Context, ns string) ([]runtime.Object, error) {
 		// Metrics are likewise non-blocking for this view.
 		oo = p.cachedNodePods(ctx, nodeName)
 		blockMx = false
-	} else {
+	case !lsel.Empty() && !client.IsClusterWide(ns):
+		// owner->pods drill-in (deployment/statefulset/daemonset/service ->
+		// pods), which pins a label selector. Same problem as node->pods: the
+		// per-namespace pod informer must LIST & decode EVERY pod in the
+		// namespace before the (small) filtered set appears -- ~20s on a busy
+		// namespace. Instead do a scoped, server-side labelSelector LIST
+		// (RV=0, served from the watch cache), non-blocking + cached.
+		oo = p.cachedScopedPods(ctx, ns, lsel)
+		blockMx = false
+	default:
 		oo, err = p.Resource.List(ctx, ns)
 		if err != nil {
 			return oo, err
@@ -267,6 +282,76 @@ func (p *Pod) listByNode(ctx context.Context, nodeName string, lsel labels.Selec
 		// (which has a spec.nodeName index) instead of a consistent etcd read
 		// that scans every pod in the cluster. Much faster on large clusters;
 		// the slight staleness is irrelevant since we re-list each refresh.
+		ResourceVersion: "0",
+	})
+	if err != nil {
+		return nil, err
+	}
+	oo := make([]runtime.Object, len(ll.Items))
+	for i := range ll.Items {
+		oo[i] = &ll.Items[i]
+	}
+
+	return oo, nil
+}
+
+// scopedPodsCache holds the most recently fetched pods per (namespace,label
+// selector) key, with a single-flight flag so refresh ticks don't pile up
+// concurrent fetches. Mirrors nodePodsCache for owner->pods drill-ins.
+var scopedPodsCache = struct {
+	sync.Mutex
+	data     map[string][]runtime.Object
+	inFlight map[string]bool
+}{
+	data:     map[string][]runtime.Object{},
+	inFlight: map[string]bool{},
+}
+
+// cachedScopedPods returns cached pods for a (namespace,selector) and triggers a
+// background server-side labelSelector LIST to refresh that cache. It never
+// blocks on the network, so it is safe to call from the synchronous first Watch
+// refresh on the tcell event loop.
+func (p *Pod) cachedScopedPods(ctx context.Context, ns string, lsel labels.Selector) []runtime.Object {
+	key := ns + "\x00" + lsel.String()
+
+	scopedPodsCache.Lock()
+	cached := scopedPodsCache.data[key]
+	if !scopedPodsCache.inFlight[key] {
+		scopedPodsCache.inFlight[key] = true
+		go func() {
+			oo, err := p.listByLabel(context.Background(), ns, lsel)
+			scopedPodsCache.Lock()
+			scopedPodsCache.inFlight[key] = false
+			if err == nil {
+				scopedPodsCache.data[key] = oo
+			}
+			scopedPodsCache.Unlock()
+			if err != nil {
+				slog.Error("Unable to list scoped pods", slogs.Namespace, ns, "selector", lsel.String(), slogs.Error, err)
+			}
+		}()
+	}
+	scopedPodsCache.Unlock()
+
+	return cached
+}
+
+// listByLabel fetches pods matching a label selector in a namespace directly
+// from the API server, bypassing the per-namespace pod informer (which must
+// list & decode every pod in the namespace before the filtered set appears).
+func (p *Pod) listByLabel(ctx context.Context, ns string, lsel labels.Selector) ([]runtime.Object, error) {
+	dial, err := p.dynClient()
+	if err != nil {
+		return nil, err
+	}
+	cctx, cancel := context.WithTimeout(ctx, p.Client().Config().CallTimeout())
+	defer cancel()
+
+	ll, err := dial.Namespace(ns).List(cctx, metav1.ListOptions{
+		LabelSelector: lsel.String(),
+		// RV=0 serves the list from the apiserver watch cache instead of a
+		// consistent etcd read (multi-second on large clusters). Slight
+		// staleness is irrelevant since we re-list each refresh tick.
 		ResourceVersion: "0",
 	})
 	if err != nil {

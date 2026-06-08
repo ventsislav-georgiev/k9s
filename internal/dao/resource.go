@@ -6,9 +6,12 @@ package dao
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"sync"
 
 	"github.com/derailed/k9s/internal"
 	"github.com/derailed/k9s/internal/client"
+	"github.com/derailed/k9s/internal/slogs"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -28,11 +31,106 @@ type Resource struct {
 // List returns a collection of resources.
 func (r *Resource) List(ctx context.Context, ns string) ([]runtime.Object, error) {
 	lsel := labels.Everything()
-	if sel, ok := ctx.Value(internal.KeyLabels).(labels.Selector); ok {
+	if sel, ok := ctx.Value(internal.KeyLabels).(labels.Selector); ok && sel != nil {
 		lsel = sel
 	}
 
-	return r.getFactory().List(r.gvr, ns, false, lsel)
+	f := r.getFactory()
+	oo, err := f.List(r.gvr, ns, false, lsel)
+	if err == nil && len(oo) > 0 {
+		return oo, nil
+	}
+	// Cold informer: on large/loaded clusters the shared informer's initial sync
+	// can take ~10-20s (paginated, consistent list over a slow konnectivity
+	// link -- measured ~17s for 220 deployments vs ~3s for a one-shot list).
+	// fac.List(wait=false) returns empty until then, so the view shows nothing.
+	// Serve a fast direct list (RV=0, watch cache) -- cached + background
+	// refreshed, never blocking -- until the informer reports synced, at which
+	// point we switch back to it for live updates.
+	if inf, herr := f.CanForResource(listNS(ns), r.gvr, client.ListAccess); herr == nil && inf != nil && inf.Informer().HasSynced() {
+		return oo, err
+	}
+
+	return r.cachedDirectList(ns, lsel), nil
+}
+
+// directListCache holds the most recent direct-list result per
+// (gvr,namespace,selector) key, with a single-flight flag so refresh ticks
+// don't pile up concurrent fetches. Used only while an informer is cold.
+var directListCache = struct {
+	sync.Mutex
+	data     map[string][]runtime.Object
+	inFlight map[string]bool
+}{
+	data:     map[string][]runtime.Object{},
+	inFlight: map[string]bool{},
+}
+
+// cachedDirectList returns the cached direct-list result for a
+// (gvr,namespace,selector) and triggers a background server-side LIST (RV=0) to
+// refresh it. It never blocks on the network, so it is safe on any caller.
+func (r *Resource) cachedDirectList(ns string, lsel labels.Selector) []runtime.Object {
+	key := r.gvr.String() + "\x00" + ns + "\x00" + lsel.String()
+
+	directListCache.Lock()
+	cached := directListCache.data[key]
+	if !directListCache.inFlight[key] {
+		directListCache.inFlight[key] = true
+		go func() {
+			oo, err := directList(r.Client(), r.gvr, ns, lsel)
+			directListCache.Lock()
+			directListCache.inFlight[key] = false
+			if err == nil {
+				directListCache.data[key] = oo
+			}
+			directListCache.Unlock()
+			if err != nil {
+				slog.Error("Direct list failed", slogs.GVR, r.gvr, slogs.Namespace, ns, slogs.Error, err)
+			}
+		}()
+	}
+	directListCache.Unlock()
+
+	return cached
+}
+
+// listNS normalizes a namespace for informer sync checks (cluster-wide/all map
+// to the blank namespace the factory keys informers by).
+func listNS(ns string) string {
+	if client.IsClusterWide(ns) {
+		return client.BlankNamespace
+	}
+	return ns
+}
+
+// directList performs a server-side LIST straight from the API server,
+// bypassing the informer. RV=0 serves it from the apiserver watch cache.
+func directList(c client.Connection, gvr *client.GVR, ns string, lsel labels.Selector) ([]runtime.Object, error) {
+	dial, err := c.DynDial()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.Config().CallTimeout())
+	defer cancel()
+
+	opts := metav1.ListOptions{ResourceVersion: "0", LabelSelector: lsel.String()}
+	res := dial.Resource(gvr.GVR())
+
+	lister := res.List
+	if !client.IsClusterWide(ns) {
+		lister = res.Namespace(ns).List
+	}
+	ll, err := lister(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	oo := make([]runtime.Object, len(ll.Items))
+	for i := range ll.Items {
+		oo[i] = &ll.Items[i]
+	}
+
+	return oo, nil
 }
 
 // Get returns a resource instance if found, else an error.
