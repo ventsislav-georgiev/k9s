@@ -83,7 +83,9 @@ func podLogs(ctx context.Context, sel map[string]string, opts *LogOptions) ([]Lo
 	}
 
 	ns, _ := client.Namespaced(opts.Path)
-	oo, err := f.List(client.PodGVR, ns, true, lsel)
+	// Direct server-side labelSelector list (RV=0) instead of syncing the whole
+	// namespace pod informer (~20s on busy namespaces) before logs can start.
+	oo, err := directList(f.Client(), client.PodGVR, ns, lsel)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +124,7 @@ func (d *DaemonSet) Pod(fqn string) (string, error) {
 
 // GetInstance returns a daemonset instance.
 func (d *DaemonSet) GetInstance(fqn string) (*appsv1.DaemonSet, error) {
-	o, err := d.getFactory().Get(d.gvr, fqn, true, labels.Everything())
+	o, err := cachedOrDirectGet(d.getFactory(), d.Client(), d.gvr, fqn)
 	if err != nil {
 		return nil, err
 	}

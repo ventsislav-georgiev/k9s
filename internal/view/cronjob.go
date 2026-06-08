@@ -19,7 +19,6 @@ import (
 	"github.com/derailed/tview"
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -47,7 +46,7 @@ func NewCronJob(gvr *client.GVR) ResourceViewer {
 
 func (*CronJob) showJobs(app *App, _ ui.Tabular, gvr *client.GVR, fqn string) {
 	slog.Debug("Showing Jobs", slogs.GVR, gvr, slogs.FQN, fqn)
-	o, err := app.factory.Get(gvr, fqn, true, labels.Everything())
+	o, err := dao.FetchObject(app.factory, gvr, fqn)
 	if err != nil {
 		app.Flash().Err(err)
 		return

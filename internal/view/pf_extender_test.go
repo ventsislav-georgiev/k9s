@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/informers"
 )
 
@@ -70,7 +71,19 @@ type testFactory struct {
 var _ dao.Factory = testFactory{}
 
 func (testFactory) Client() client.Connection {
-	return nil
+	return pfConn{}
+}
+
+// pfConn is a no-dial connection: cachedOrDirectGet falls back to a direct
+// server GET only on an informer-cache miss, and the only method it calls there
+// is DynDial. Returning an error keeps the not-found path deterministic without
+// a live API server.
+type pfConn struct {
+	client.Connection
+}
+
+func (pfConn) DynDial() (dynamic.Interface, error) {
+	return nil, errors.New("no dial in test")
 }
 func (t testFactory) Get(*client.GVR, string, bool, labels.Selector) (runtime.Object, error) {
 	if t.expectedGet != nil {

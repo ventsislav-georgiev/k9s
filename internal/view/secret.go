@@ -9,7 +9,6 @@ import (
 	"github.com/derailed/k9s/internal/dao"
 	"github.com/derailed/k9s/internal/ui"
 	"github.com/derailed/tcell/v2"
-	"k8s.io/apimachinery/pkg/labels"
 )
 
 // Secret presents a secret viewer.
@@ -44,7 +43,7 @@ func (s *Secret) decodeCmd(evt *tcell.EventKey) *tcell.EventKey {
 		return evt
 	}
 
-	o, err := s.App().factory.Get(s.GVR(), path, true, labels.Everything())
+	o, err := dao.FetchObject(s.App().factory, s.GVR(), path)
 	if err != nil {
 		s.App().Flash().Err(err)
 		return nil

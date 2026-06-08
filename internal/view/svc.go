@@ -208,7 +208,7 @@ func clearStatus(app *App) {
 }
 
 func fetchService(f dao.Factory, path string) (*v1.Service, error) {
-	o, err := f.Get(client.SvcGVR, path, true, labels.Everything())
+	o, err := dao.FetchObject(f, client.SvcGVR, path)
 	if err != nil {
 		return nil, err
 	}

@@ -60,7 +60,7 @@ func (s *StatefulSet) Restart(ctx context.Context, path string, opts *metav1.Pat
 
 // GetInstance returns a statefulset instance.
 func (*StatefulSet) GetInstance(f Factory, fqn string) (*appsv1.StatefulSet, error) {
-	o, err := f.Get(client.StsGVR, fqn, true, labels.Everything())
+	o, err := cachedOrDirectGet(f, f.Client(), client.StsGVR, fqn)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +98,7 @@ func (s *StatefulSet) Pod(fqn string) (string, error) {
 }
 
 func (s *StatefulSet) getStatefulSet(fqn string) (*appsv1.StatefulSet, error) {
-	o, err := s.getFactory().Get(s.gvr, fqn, true, labels.Everything())
+	o, err := cachedOrDirectGet(s.getFactory(), s.Client(), s.gvr, fqn)
 	if err != nil {
 		return nil, err
 	}

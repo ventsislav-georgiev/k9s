@@ -11,7 +11,6 @@ import (
 	"github.com/derailed/k9s/internal/ui"
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -36,7 +35,7 @@ func NewJob(gvr *client.GVR) ResourceViewer {
 }
 
 func (*Job) showPods(app *App, _ ui.Tabular, gvr *client.GVR, path string) {
-	o, err := app.factory.Get(gvr, path, true, labels.Everything())
+	o, err := dao.FetchObject(app.factory, gvr, path)
 	if err != nil {
 		app.Flash().Err(err)
 		return
