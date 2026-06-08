@@ -94,6 +94,30 @@ func (r *Resource) cachedDirectList(ns string, lsel labels.Selector) []runtime.O
 	return cached
 }
 
+// ResetDirectCaches clears every non-blocking direct-access cache (the cold
+// informer list/get fallbacks: directListCache, nodePodsCache, scopedPodsCache).
+// Call it on a context switch so a freshly selected cluster never paints stale
+// rows carried over from the previous one (caches key on gvr/ns/selector, not
+// context). With data cleared, loading indicators show until the new cluster's
+// direct lists land, and a stale in-flight goroutine is overwritten on the next
+// refresh tick.
+func ResetDirectCaches() {
+	directListCache.Lock()
+	directListCache.data = map[string][]runtime.Object{}
+	directListCache.inFlight = map[string]bool{}
+	directListCache.Unlock()
+
+	nodePodsCache.Lock()
+	nodePodsCache.data = map[string][]runtime.Object{}
+	nodePodsCache.inFlight = map[string]bool{}
+	nodePodsCache.Unlock()
+
+	scopedPodsCache.Lock()
+	scopedPodsCache.data = map[string][]runtime.Object{}
+	scopedPodsCache.inFlight = map[string]bool{}
+	scopedPodsCache.Unlock()
+}
+
 // listNS normalizes a namespace for informer sync checks (cluster-wide/all map
 // to the blank namespace the factory keys informers by).
 func listNS(ns string) string {
