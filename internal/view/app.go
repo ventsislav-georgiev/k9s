@@ -20,6 +20,7 @@ import (
 	"github.com/derailed/k9s/internal"
 	"github.com/derailed/k9s/internal/client"
 	"github.com/derailed/k9s/internal/config"
+	"github.com/derailed/k9s/internal/dao"
 	"github.com/derailed/k9s/internal/model"
 	"github.com/derailed/k9s/internal/slogs"
 	"github.com/derailed/k9s/internal/ui"
@@ -501,6 +502,9 @@ func (a *App) switchContext(ci *cmd.Interpreter, force bool) error {
 		}
 
 		if a.factory != nil {
+			// Drop cold-cache direct-list fallbacks from the previous cluster so
+			// the new context shows loading/empty instead of stale rows for a tick.
+			dao.ResetDirectCaches()
 			a.initFactory(ns)
 		}
 
