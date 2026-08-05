@@ -29,6 +29,12 @@ import (
 const (
 	labelNodeRolePrefix = "node-role.kubernetes.io/"
 	labelNodeRoleSuffix = "kubernetes.io/role"
+	// GKE standby capacity buffer nodes are kept suspended (cordoned, kubelet down) until
+	// scaled up. They surface a Suspended condition instead of being genuinely broken.
+	labelStandbyCapacityNode = "buffer.gke.io/standby-capacity-node"
+	nodeConditionSuspended   = v1.NodeConditionType("Suspended")
+	nodeStatusSuspended      = "Suspended"
+	nodeStatusStandby        = "Standby"
 )
 
 var (
@@ -126,8 +132,7 @@ func (n Node) defaultRow(nwm *NodeWithMetrics, r *model1.Row) error {
 	c, a := gatherNodeMX(&no, nwm.MX)
 
 	statuses := make(sort.StringSlice, 10)
-	status(no.Status.Conditions, no.Spec.Unschedulable, statuses)
-	sort.Sort(statuses)
+	status(&no, statuses)
 	roles := make(sort.StringSlice, 10)
 	nodeRoles(&no, roles)
 	sort.Sort(roles)
@@ -181,7 +186,7 @@ func (n Node) Healthy(_ context.Context, o any) error {
 		return nil
 	}
 	ss := make([]string, 10)
-	status(no.Status.Conditions, no.Spec.Unschedulable, ss)
+	status(&no, ss)
 
 	return n.diagnose(ss)
 }
@@ -195,6 +200,9 @@ func (Node) diagnose(ss []string) error {
 	for _, s := range ss {
 		if s == "" {
 			continue
+		}
+		if s == nodeStatusSuspended {
+			return nil
 		}
 		if s == "SchedulingDisabled" {
 			return cordonErr
@@ -319,32 +327,50 @@ func getIPs(addrs []v1.NodeAddress) (iIP, eIP string) {
 	return
 }
 
-func status(conds []v1.NodeCondition, exempt bool, res []string) {
+func status(no *v1.Node, res []string) {
 	var index int
+	conds := no.Status.Conditions
 	conditions := make(map[v1.NodeConditionType]*v1.NodeCondition, len(conds))
 	for n := range conds {
 		cond := conds[n]
 		conditions[cond.Type] = &cond
 	}
 
-	validConditions := []v1.NodeConditionType{v1.NodeReady}
-	for _, validCondition := range validConditions {
-		condition, ok := conditions[validCondition]
-		if !ok {
-			continue
+	// A suspended standby capacity buffer node is cordoned and reports NotReady by design.
+	// Report the intent instead of a bogus failure.
+	suspended := false
+	if c, ok := conditions[nodeConditionSuspended]; ok && c.Status == v1.ConditionTrue {
+		res[index] = nodeStatusSuspended
+		index++
+		suspended = true
+	}
+
+	if !suspended {
+		validConditions := []v1.NodeConditionType{v1.NodeReady}
+		for _, validCondition := range validConditions {
+			condition, ok := conditions[validCondition]
+			if !ok {
+				continue
+			}
+			neg := ""
+			if condition.Status != v1.ConditionTrue {
+				neg = "Not"
+			}
+			res[index] = neg + string(condition.Type)
+			index++
 		}
-		neg := ""
-		if condition.Status != v1.ConditionTrue {
-			neg = "Not"
+		if len(res) == 0 {
+			res[index] = "Unknown"
+			index++
 		}
-		res[index] = neg + string(condition.Type)
+	}
+
+	// Capacity buffer node, suspended or resumed and serving as active spare capacity.
+	if no.Labels[labelStandbyCapacityNode] == "true" {
+		res[index] = nodeStatusStandby
 		index++
 	}
-	if len(res) == 0 {
-		res[index] = "Unknown"
-		index++
-	}
-	if exempt {
+	if no.Spec.Unschedulable && !suspended {
 		res[index] = "SchedulingDisabled"
 	}
 }
