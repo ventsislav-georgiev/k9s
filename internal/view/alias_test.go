@@ -30,7 +30,7 @@ func TestAliasNew(t *testing.T) {
 
 	require.NoError(t, v.Init(makeContext(t)))
 	assert.Equal(t, "Aliases", v.Name())
-	assert.Len(t, v.Hints(), 9)
+	assert.Len(t, v.Hints(), 10)
 }
 
 func TestAliasSearch(t *testing.T) {
